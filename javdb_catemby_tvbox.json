@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "py_javdb_catemby",
+      "name": "🎀JavDB",
+      "type": 3,
+      "api": "https://raw.githubusercontent.com/frank1990310/ziyongyuan/main/javdb_catemby.py",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 0,
+      "changeable": 0
+    }
+  ]
+}
