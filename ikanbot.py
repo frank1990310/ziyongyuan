@@ -61,11 +61,38 @@ class Spider(SpiderBase):
     def manualVideoCheck(self):
         return False
 
+    def _encode_url(self, url):
+        """对 URL 中的中文路径进行编码，避免请求失败"""
+        if not url:
+            return url
+        try:
+            parsed = urllib.parse.urlsplit(url)
+            # 对 path 分段编码（保留 /）
+            path_parts = parsed.path.split("/")
+            encoded_parts = []
+            for p in path_parts:
+                if not p:
+                    encoded_parts.append(p)
+                    continue
+                # 已经是百分号编码的不再重复编码
+                if "%" in p:
+                    encoded_parts.append(p)
+                else:
+                    encoded_parts.append(quote(p, safe=""))
+            new_path = "/".join(encoded_parts)
+            return urllib.parse.urlunsplit((
+                parsed.scheme, parsed.netloc, new_path,
+                parsed.query, parsed.fragment
+            ))
+        except Exception:
+            return url
+
     def _fetch(self, url, headers=None):
         if not url:
             return ""
         if url.startswith("/"):
             url = self.host + url
+        url = self._encode_url(url)
         h = {
             "User-Agent": self._ua,
             "Referer": self.host + "/",
@@ -85,6 +112,7 @@ class Spider(SpiderBase):
                 return raw.decode("utf-8", errors="ignore")
         except Exception:
             return ""
+
 
     def _fetch_json(self, url, headers=None):
         text = self._fetch(url, headers)
@@ -125,48 +153,57 @@ class Spider(SpiderBase):
         return "".join(keys)
 
     def _parse_list_items(self, html):
-        """解析列表页卡片"""
+        """解析列表页卡片 - 更稳健的提取方式"""
         vod_list = []
         seen = set()
 
-        # 匹配 /play/数字
-        pattern = r'<a[^>]+href=["\'](/play/(\d+))["\'][^>]*>[\s\S]*?</a>'
-        blocks = re.findall(r'(<div[^>]*class=["\'][^"\']*item[^"\']*["\'][^>]*>[\s\S]*?</div>\s*</div>)', html)
-        if not blocks:
-            blocks = re.findall(r'(<a[^>]+href=["\']/play/\d+["\'][^>]*>[\s\S]*?</a>)', html)
+        if not html:
+            return vod_list
 
-        for block in blocks:
-            href_m = re.search(r'href=["\'](/play/(\d+))["\']', block)
-            if not href_m:
-                continue
-            path, vid = href_m.groups()
+        # 方法1：直接用 href + alt / data-src 成对提取
+        # 页面结构大致是：
+        # <div class="... item"> ... <a href="/play/xxx"> <img data-src="..." alt="标题"> ...
+        pairs = re.findall(
+            r'href=["\'](/play/(\d+))["\'][\s\S]{0,600}?(?:alt=["\']([^"\']*)["\']|data-src=["\']([^"\']+)["\'])',
+            html
+        )
+
+        for item in pairs:
+            path, vid = item[0], item[1]
             if vid in seen:
                 continue
             seen.add(vid)
 
-            # 标题
-            title = ""
-            title_m = re.search(r'<[^>]+class=["\'][^"\']*title[^"\']*["\'][^>]*>([\s\S]*?)</', block)
-            if title_m:
-                title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
+            title = (item[2] or "").strip()
+            pic = (item[3] or "").strip()
+
+            # 如果这一次只拿到了图片，再往前后补标题
             if not title:
-                alt_m = re.search(r'alt=["\']([^"\']+)["\']', block)
-                if alt_m:
-                    title = alt_m.group(1).strip()
+                # 在附近再找一次 alt
+                nearby = re.search(
+                    r'href=["\']/play/%s["\'][\s\S]{0,800}?alt=["\']([^"\']+)["\']' % vid,
+                    html
+                )
+                if nearby:
+                    title = nearby.group(1).strip()
+
             if not title:
                 title = "影片" + vid
 
             title = html_lib.unescape(title)
 
-            # 图片
-            pic = ""
-            pic_m = re.search(r'(?:data-src|src)=["\']([^"\']+\.(?:jpg|jpeg|png|webp)[^"\']*)["\']', block, re.I)
-            if pic_m:
-                pic = pic_m.group(1).strip()
-                if pic.startswith("//"):
-                    pic = "https:" + pic
-                elif pic.startswith("/"):
-                    pic = self.host + pic
+            if not pic:
+                pic_m = re.search(
+                    r'href=["\']/play/%s["\'][\s\S]{0,800}?data-src=["\']([^"\']+)["\']' % vid,
+                    html
+                )
+                if pic_m:
+                    pic = pic_m.group(1).strip()
+
+            if pic.startswith("//"):
+                pic = "https:" + pic
+            elif pic.startswith("/"):
+                pic = self.host + pic
 
             vod_list.append({
                 "vod_id": path,
@@ -176,43 +213,73 @@ class Spider(SpiderBase):
                 "style": {"type": "rect", "ratio": 0.7}
             })
 
+        # 方法2：兜底，只要有 /play/id 就收录
+        if not vod_list:
+            for m in re.finditer(r'href=["\'](/play/(\d+))["\']', html):
+                path, vid = m.groups()
+                if vid in seen:
+                    continue
+                seen.add(vid)
+                vod_list.append({
+                    "vod_id": path,
+                    "vod_name": "影片" + vid,
+                    "vod_pic": "",
+                    "vod_remarks": "爱看机器人",
+                    "style": {"type": "rect", "ratio": 0.7}
+                })
+
         return vod_list
+
 
     def homeContent(self, filter):
         classes = [
             {"type_name": "热门电影", "type_id": "/hot/index-movie-热门.html"},
+            {"type_name": "最新电影", "type_id": "/hot/index-movie-最新.html"},
+            {"type_name": "豆瓣高分", "type_id": "/hot/index-movie-豆瓣高分.html"},
             {"type_name": "热门剧集", "type_id": "/hot/index-tv-热门.html"},
-            {"type_name": "全部影片", "type_id": "/kanlist/全部-p-1.html"},
-            {"type_name": "电影", "type_id": "/category/电影"},
-            {"type_name": "电视剧", "type_id": "/category/电视剧"},
-            {"type_name": "综艺", "type_id": "/category/综艺"},
-            {"type_name": "动漫", "type_id": "/category/动漫"},
+            {"type_name": "最新剧集", "type_id": "/hot/index-tv-最新.html"},
+            {"type_name": "华语电影", "type_id": "/hot/index-movie-华语.html"},
+            {"type_name": "欧美电影", "type_id": "/hot/index-movie-欧美.html"},
+            {"type_name": "韩国电影", "type_id": "/hot/index-movie-韩国.html"},
+            {"type_name": "日本电影", "type_id": "/hot/index-movie-日本.html"},
+            {"type_name": "动作", "type_id": "/hot/index-movie-动作.html"},
+            {"type_name": "喜剧", "type_id": "/hot/index-movie-喜剧.html"},
+            {"type_name": "爱情", "type_id": "/hot/index-movie-爱情.html"},
+            {"type_name": "科幻", "type_id": "/hot/index-movie-科幻.html"},
+            {"type_name": "悬疑", "type_id": "/hot/index-movie-悬疑.html"},
+            {"type_name": "恐怖", "type_id": "/hot/index-movie-恐怖.html"},
         ]
         return {"class": classes}
 
     def homeVideoContent(self):
-        html = self._fetch(self.host + "/hot/index-movie-热门.html")
+        html = self._fetch("/hot/index-movie-热门.html")
         vod_list = self._parse_list_items(html)
         return {"list": vod_list[:20]}
+
 
     def categoryContent(self, tid, pg, filter, extend):
         page = int(pg) if str(pg).isdigit() else 1
         path = str(tid).strip()
 
-        if path.startswith("/hot/") or path.startswith("/kanlist/"):
-            if page > 1 and "-p-" not in path:
-                # 简单处理分页
-                if path.endswith(".html"):
-                    path = path.replace(".html", "-p-%d.html" % page)
-            target = self.host + path
-        elif path.startswith("/category/"):
-            target = self.host + path
-            if page > 1:
-                target += "?page=%d" % page
-        else:
-            target = self.host + path
+        # 统一成相对路径
+        if path.startswith("http"):
+            path = urllib.parse.urlsplit(path).path
 
-        html = self._fetch(target)
+        if path.startswith("/hot/"):
+            # 热门类分页：原路径 ...热门.html → ...热门-p-2.html
+            if page > 1:
+                if path.endswith(".html"):
+                    path = path[:-5] + ("-p-%d.html" % page)
+        elif path.startswith("/kanlist/"):
+            if page > 1 and "-p-" in path:
+                path = re.sub(r'-p-\d+', '-p-%d' % page, path)
+            elif page > 1:
+                path = path.replace(".html", "-p-%d.html" % page)
+        elif path.startswith("/category/"):
+            if page > 1:
+                path = path + ("?page=%d" % page if "?" not in path else "&page=%d" % page)
+
+        html = self._fetch(path)
         vod_list = self._parse_list_items(html)
 
         return {
@@ -222,6 +289,7 @@ class Spider(SpiderBase):
             "total": 9999,
             "list": vod_list
         }
+
 
     def detailContent(self, ids):
         raw = ids[0] if isinstance(ids, (list, tuple)) else str(ids)
