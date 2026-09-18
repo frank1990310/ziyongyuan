@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "py_missav_mianfan",
+      "name": "🦋蝴蝶·ThisAV完整版(免翻)",
+      "type": 3,
+      "api": "https://raw.githubusercontent.com/frank1990310/ziyongyuan/main/missav_mianfan.py",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1,
+      "changeable": 0
+    }
+  ]
+}
