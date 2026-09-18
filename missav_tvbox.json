@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "py_missav",
+      "name": "🦋蝴蝶影视·MissAV",
+      "type": 3,
+      "api": "https://raw.githubusercontent.com/frank1990310/ziyongyuan/refs/heads/main/missav.py",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1,
+      "changeable": 0
+    }
+  ]
+}
