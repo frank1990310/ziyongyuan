@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "py_getav",
+      "name": "🦋蝴蝶影视·GetAV",
+      "type": 3,
+      "api": "https://raw.githubusercontent.com/frank1990310/ziyongyuan/main/getav.py",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1,
+      "changeable": 0
+    }
+  ]
+}
